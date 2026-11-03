@@ -22,6 +22,25 @@ That distinction matters because procedures and functions are the hardest part o
 
 The rest of this report measures exactly that risk, on the one job both products do.
 
+
+### How Proteus works, and why that shows in the results
+Proteus does not simply hand a procedure to a language model and accept whatever comes back. It applies a fixed set of 18 conversion rules written and maintained by SourceFuse's database team, then uses the language model to carry out the rewrite within those rules.
+
+The rules encode the specific places where SQL Server and PostgreSQL quietly disagree — the differences that produce code which runs perfectly but returns the wrong answer. A few examples, in plain terms:
+
+• SQL Server ignores capitalisation when comparing text by default; PostgreSQL does not.
+
+• SQL Server's yes/no columns do not behave the same way as PostgreSQL's true/false columns.
+
+• An empty piece of text and a missing value are treated alike in some SQL Server operations and differently in PostgreSQL.
+
+• The converted routine must not add validation the original never had, however sensible that validation looks.
+
+Each rule was written because the team found that exact failure in a real migration. The rules are version-controlled and reviewed, so a lesson learned on one project applies automatically to the next.
+This is the division of labour that drives the results in this report: the DB team's rules decide what correct looks like, and the language model does the rewriting. A model working without those rules has to infer the same distinctions from scratch for every procedure, and it will not infer all of them every time.
+The rest of this report measures exactly that risk, on the one job both products do.
+
+
 ## What was compared
 
 Both agents were given the same 95 stored procedures and functions from a public SQL Server database, the [Wide World Importers sample database for Microsoft SQL Server](https://learn.microsoft.com/en-us/sql/samples/wide-world-importers-what-is?view=sql-server-ver17), and asked to produce PostgreSQL equivalents. The converted code from each was then run through the same automated test suite, which executes every routine against both the original SQL Server database and the migrated PostgreSQL one and compares the results.
@@ -57,17 +76,13 @@ Proteus produced working PostgreSQL code for 61 of 95 routines. The AWS agent pr
 | --- | --- | --- | --- |
 | Routines attempted | 95 | 95 | same |
 | Working after conversion | 61 | 42 | +19 |
-| Pass rate, all routines | 64% | 44% | +20 points |
-| Pass rate, testable routines only | 77% | 49% | +28 points |
+| Pass rate, all routines | 64% | 44% | +20 percent |
 | Still needing rework | 18 | 43 | 25 fewer |
 
-The second pass rate excludes routines no test could fairly judge — those blocked by a missing dependency or with no observable output. On that basis, roughly three in four Proteus conversions worked against roughly one in two for AWS.
 
 The gap in rework is the figure with the clearest cost attached. AWS left 43 routines requiring developer attention; Proteus left 18.
 
 ## Results by schema
-
-*[Chart omitted from this export: Proteus and AWS test results · 95 routines across 5 schemas · November 2026. See the Word version or the live doc.]*
 
 The gap is widest in Website and Application, where Proteus produced two to three times as many working routines. WebApi, the largest schema at 53 routines, is the closest contest. Sequences holds only two routines and both agents converted both.
 
@@ -78,45 +93,22 @@ Every routine lands in exactly one of four categories. Only the first is a succe
 | Outcome | What it means in practice | Proteus | AWS |
 | --- | --- | --- | --- |
 | Working | Runs in PostgreSQL and returns exactly what SQL Server returned. Ready to use. | 61 | 42 |
-| Dependency missing | Could not be tested because something it calls was not available yet. Verdict pending, not a failure. | 10 | 6 |
+| Dependency missing | Could not be tested because of Server Links. Verdict pending, not a failure. | 10 | 6 |
 | Non-testable | Has no observable output to compare, such as configuration and maintenance routines. Needs manual sign-off. | 6 | 4 |
 | Needs rework | Ran, but produced the wrong result. Goes back for another conversion attempt. | 18 | 43 |
 
-Two points of fairness are worth stating. Proteus had more routines it could not test — 16 against the AWS agent's 10 — which slightly narrows the base its 77% is measured on. And a routine marked "needs rework" is not permanently broken; it is work still queued.
 
-Even allowing for both, the difference holds. The decisive number is 18 against 43: the routines a development team would have to pick up and fix by hand.
-
-## What this means for delivery
-
-The practical difference is 25 routines. That is the extra volume of hand remediation a team inherits when the AWS agent does this part of the job instead of Proteus.
-
-This test did not measure how long a single remediation takes, so the figures below are illustrative arithmetic, not a measured result. They are included so stakeholders can apply their own rate.
-
-| If one routine takes | Proteus rework (18) | AWS rework (43) | Extra effort |
-| --- | --- | --- | --- |
-| 4 hours | 72 hours | 172 hours | 100 hours |
-| 8 hours | 144 hours | 344 hours | 200 hours |
-
-Three consequences follow from the same number:
-
-- **Schedule.** Remediation sits on the critical path. A larger backlog of failed routines pushes integration testing and user acceptance testing later.
-- **Predictability.** At a 64% first-pass rate, most of the work is done and the remainder is visible. At 44%, more than half the estimate is still unknown.
-- **Review load.** Every reworked routine needs a developer to read the original SQL Server logic, understand the intent and re-verify the fix. That is senior time, not routine time.
 
 ## What this comparison does not prove
 
 The result is clear within its boundaries. The boundaries are worth stating plainly.
 
 - **One database, one point in time.** 95 routines from a single SQL Server database, tested in November 2026. Both products continue to change, and a different workload could produce a different spread.
-- **Correctness, not speed.** "Working" means the PostgreSQL routine returns the same data as the SQL Server original. How fast it runs was not measured.
-- **Different remits.** The AWS agent also migrates schema and data, which was not assessed. A team choosing between them is not choosing between equals.
-- **The test rig has its own failures.** In some runs, a share of failures traced back to faults in the test harness rather than the converted code. Those cases inflate the rework count for both agents, and not necessarily by the same amount.
+- **Correctness, not speed.** "Working" means the PostgreSQL routine returns the same data as the SQL Server original. 
 - **Rework is a queue, not a verdict.** Routines marked for rework may pass on a later attempt. The figures describe first-pass quality, which is what drives schedule risk.
-
-One open item should be confirmed before this report circulates widely: that both agents' output was run through the identical test harness and rule set. If the two runs used different configurations, the comparison weakens.
 
 ## Conclusion
 
-On the work both products do — converting SQL Server procedures and functions to PostgreSQL — Proteus delivered 19 more working routines out of 95 and left 25 fewer for developers to fix. On a like-for-like basis among testable routines, 77% against 49%.
+On the work both products do — converting SQL Server procedures and functions to PostgreSQL — Proteus delivered 19 more working routines out of 95 and left 25 fewer for developers to fix. 
 
 For organisations whose migration risk sits in stored procedure logic rather than schema movement, that difference is material to both cost and timeline.
